@@ -8,4 +8,5 @@
 5. Run `pip install -r requirements.txt`
 
 ## Running Streamlit
-1. Run `streamlit run app.py`
+1. Activate the virtual environment with `source venv/bin/activate` (if not already activated)
+2. Run `streamlit run app.py`
