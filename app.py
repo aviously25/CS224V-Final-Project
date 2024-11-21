@@ -25,7 +25,7 @@ def stream_response(user_query, chat_history):
     Streams response from TogetherAI using LangChain's ChatOpenAI wrapper.
     """
     template = """
-    Use the following pieces of context to answer the question at the end.
+    Use the following pieces of context to answer the question at the end, and respond kindly.
     If you don't know the answer, just say that you don't know, don't try to make up an answer.
     Keep the answer as concise as possible.
     Always say "thanks for asking!" at the end of the answer.
@@ -81,7 +81,10 @@ if user_query:
     with st.chat_message("Human"):
         st.markdown(user_query)
 
+    # TODO: do RAG stuff here
+
     # Stream the LLM Response
+    # TODO: input context
     with st.chat_message("AI"):
         response_stream = stream_response(user_query, st.session_state.chat_history)
         response = st.write_stream(response_stream)
