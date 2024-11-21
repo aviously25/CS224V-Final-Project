@@ -18,6 +18,7 @@ title = "CS224V LectureBot 📚"
 st.set_page_config(page_title=title, page_icon="🤖")
 st.title(title)
 
+
 # Function to Stream Responses
 def stream_response(user_query, chat_history):
     """
@@ -42,17 +43,20 @@ def stream_response(user_query, chat_history):
         base_url="https://api.together.xyz/v1",
         api_key=os.environ["TOGETHER_API_KEY"],
         model="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-        streaming=True
+        streaming=True,
     )
 
     # Combine prompt and TogetherAI in LangChain pipeline
     chain = prompt | llm | StrOutputParser()
-    
+
     # Stream response
-    return chain.stream({
-        "chat_history": chat_history,
-        "user_question": user_query,
-    })
+    return chain.stream(
+        {
+            "chat_history": chat_history,
+            "user_question": user_query,
+        }
+    )
+
 
 # Session State for Chat History
 if "chat_history" not in st.session_state:
