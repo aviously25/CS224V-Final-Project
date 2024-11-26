@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit_nested_layout
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
@@ -49,21 +50,34 @@ llm = ChatOpenAI(
 )
 
 
+def ms_to_min_sec(ms):
+    minutes = ms // 60000
+    seconds = (ms % 60000) // 1000
+    return f"{int(minutes):02d}:{int(seconds):02d}"
+
+
 def format_docs(docs):
-    # print(
-    #     "\n\n".join(
-    #         [
-    #             json.dumps({"content": doc.page_content, "metadata": doc.metadata})
-    #             for doc in docs
-    #         ]
-    #     )
-    # )
-    return "\n\n".join(
+    formatted_docs = "\n\n".join(
         [
             json.dumps({"content": doc.page_content, "metadata": doc.metadata})
             for doc in docs
         ]
     )
+
+    citations = sorted(
+        [
+            {
+                "title": f"Lecture {int(doc.metadata['lecture_number'])} ({ms_to_min_sec(doc.metadata.get('start_ms', 0))} - {ms_to_min_sec(doc.metadata.get('end_ms', 0))})",
+                "content": doc.page_content,
+                "lecture_number": int(doc.metadata["lecture_number"]),
+                "start_ms": doc.metadata.get("start_ms", 0),
+            }
+            for doc in docs
+        ],
+        key=lambda x: (x["lecture_number"], x["start_ms"]),
+    )
+
+    return formatted_docs, citations
 
 
 def retrieve_context(user_query):
@@ -81,8 +95,13 @@ def retrieve_context(user_query):
     For example, given the following user query: "Summarize the first 10 minutes of lecture 1", your response should be:
     {{
       "lecture_number": 1,
-      "start_ms": 0,
-      "end_ms": 600000
+      "start_ms": {{"$lte": 600000}},
+    }}
+
+    Another example, given the following user query: "Summarize the first half of lecture 1", your response should be:
+    {{
+      "lecture_number": 1,
+      "start_ms": {{"$lte": 2700000}},
     }}
 
     Another example, given the following user: "What is the summary of the first chapter of lecture 2?", your response should be:
@@ -102,16 +121,21 @@ def retrieve_context(user_query):
     response = chain.invoke({"user_query": user_query})
     cleaned_response = response.content.replace("```", "").replace("\\n", "")
 
+    print("cleaned_response", cleaned_response)
+
     try:
         metadata_filters = json.loads(cleaned_response)
     except json.JSONDecodeError:
         metadata_filters = {}
 
+    print("metadata_filters", metadata_filters)
+
     retriever = vectorstore.as_retriever(
-        search_type="similarity", search_kwargs={"k": 10, "filter": metadata_filters}
+        search_type="similarity", search_kwargs={"k": 20, "filter": metadata_filters}
     )
     retrieved_context = retriever.invoke(user_query)
-    return format_docs(retrieved_context)
+    formatted_docs, citations = format_docs(retrieved_context)
+    return formatted_docs, citations, retrieved_context
 
 
 # Function to Stream Responses
@@ -135,19 +159,22 @@ def stream_response(user_query, chat_history):
     # Prepare the prompt
     prompt = ChatPromptTemplate.from_template(template)
 
-    retrieved_context = retrieve_context(user_query)
+    formatted_docs, citations, retrieved_context = retrieve_context(user_query)
 
     # Combine prompt and TogetherAI in LangChain pipeline
     chain = prompt | llm | StrOutputParser()
 
     # Stream response
-    return chain.stream(
+    response_stream = chain.stream(
         {
             "retrieved_context": retrieved_context,
             "user_question": user_query,
-            "chat_history": chat_history,
+            "chat_history": "\n\n".join([msg.content for msg in chat_history]),
         }
     )
+
+    response = "".join(response_stream)
+    return response, citations
 
 
 # Session State for Chat History
@@ -175,7 +202,13 @@ if user_query:
 
     # Stream the LLM Response
     with st.chat_message("AI"):
-        response_stream = stream_response(user_query, st.session_state.chat_history)
-        response = st.write_stream(response_stream)
+        response, citations = stream_response(user_query, st.session_state.chat_history)
+        st.write(response)
+
+        with st.expander("View Citations"):
+            st.write("Here are the citations for the retrieved context:")
+            for citation in citations:
+                with st.expander(citation["title"]):
+                    st.write(citation["content"])
 
     st.session_state.chat_history.append(AIMessage(content=response))
