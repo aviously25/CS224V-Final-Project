@@ -81,7 +81,33 @@ def format_docs(docs):
     return formatted_docs, citations
 
 
-def retrieve_context(user_query):
+def rewrite_query(user_query, chat_history):
+    template = """
+    Given the following conversation history and the latest user query, rewrite the user query to be independently standing and provide enough context for a retrieval system to fetch relevant documents.
+    Do not include any additional text or explanations, only the rewritten user query. Keep the response fairly concise.
+
+    Conversation history:
+    {chat_history}
+
+    Latest user query:
+    {user_query}
+
+    Rewritten user query:
+    """
+    prompt = ChatPromptTemplate.from_template(template)
+    chain = prompt | llm
+
+    response = chain.invoke(
+        {
+            "chat_history": "\n\n".join([msg.content for msg in chat_history]),
+            "user_query": user_query,
+        }
+    )
+    rewritten_query = response.content.strip()
+    return rewritten_query
+
+
+def retrieve_context(user_query, chat_history):
     template = """
     You are a bot that extracts metadata filters from user queries. You are given a user query and you need to extract the metadata filters from the query. 
     This is useful for retrieving specific chunks of text from a document based on user queries. If you are not able to extract the metadata filters from the user query, you should return an empty dictionary.
@@ -119,7 +145,11 @@ def retrieve_context(user_query):
     prompt = ChatPromptTemplate.from_template(template)
     chain = prompt | llm
 
-    response = chain.invoke({"user_query": user_query})
+    print("user_query:", user_query)
+    rewritten_query = rewrite_query(user_query, chat_history)
+    print("rewritten_query:", rewritten_query)
+
+    response = chain.invoke({"user_query": rewritten_query})
     cleaned_response = response.content.replace("```", "").replace("\\n", "")
 
     try:
@@ -130,7 +160,9 @@ def retrieve_context(user_query):
     retriever = vectorstore.as_retriever(
         search_type="similarity", search_kwargs={"k": 20, "filter": metadata_filters}
     )
-    retrieved_context = retriever.invoke(user_query)
+
+    retrieved_context = retriever.invoke(rewritten_query)
+
     formatted_docs, citations = format_docs(retrieved_context)
     return formatted_docs, citations, retrieved_context
 
@@ -156,7 +188,9 @@ def stream_response(user_query, chat_history):
     # Prepare the prompt
     prompt = ChatPromptTemplate.from_template(template)
 
-    formatted_docs, citations, retrieved_context = retrieve_context(user_query)
+    formatted_docs, citations, retrieved_context = retrieve_context(
+        user_query, chat_history
+    )
 
     # Combine prompt and TogetherAI in LangChain pipeline
     chain = prompt | llm | StrOutputParser()
