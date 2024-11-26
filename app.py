@@ -40,22 +40,78 @@ together_embedding = TogetherEmbeddings(
 )
 vectorstore = PineconeVectorStore(index, embedding=together_embedding, text_key="text")
 
+# Initialize ChatOpenAI for TogetherAI
+llm = ChatOpenAI(
+    base_url="https://api.together.xyz/v1",
+    api_key=TOGETHER_API_KEY,
+    model="nvidia/Llama-3.1-Nemotron-70B-Instruct-HF",
+    streaming=True,
+)
+
 
 def format_docs(docs):
-    print(
-        "\n\n".join(
-            [
-                json.dumps({"content": doc.page_content, "metadata": doc.metadata})
-                for doc in docs
-            ]
-        )
-    )
+    # print(
+    #     "\n\n".join(
+    #         [
+    #             json.dumps({"content": doc.page_content, "metadata": doc.metadata})
+    #             for doc in docs
+    #         ]
+    #     )
+    # )
     return "\n\n".join(
         [
             json.dumps({"content": doc.page_content, "metadata": doc.metadata})
             for doc in docs
         ]
     )
+
+
+def retrieve_context(user_query):
+    template = """
+    You are a bot that extracts metadata filters from user queries. You are given a user query and you need to extract the metadata filters from the query. 
+    This is useful for retrieving specific chunks of text from a document based on user queries. If you are not able to extract the metadata filters from the user query, you should return an empty dictionary.
+    The following schema is used to represent the metadata filters:
+        {{
+            "document_type": str, # one of "chapter summary", "transcript"
+            "lecture_number": int, # the lecture number that the chunk of text comes from
+            "start_ms": int, # the start time of the chunk of text in milliseconds
+            "end_ms": int # the end time of the chunk of text in milliseconds
+        }}
+    
+    For example, given the following user query: "Summarize the first 10 minutes of lecture 1", your response should be:
+    {{
+      "lecture_number": 1,
+      "start_ms": 0,
+      "end_ms": 600000
+    }}
+
+    Another example, given the following user: "What is the summary of the first chapter of lecture 2?", your response should be:
+    {{
+      "lecture_number": 2
+    }}
+
+    If you are not able to extract the metadata filters from the user query or are not fully confident in your extraction, your response should be:
+    {{}}
+
+    Extract the metadata filters from the user query below and respond only in JSON format. Do not include any additional text or explanations.
+    User query: {user_query}
+    """
+    prompt = ChatPromptTemplate.from_template(template)
+    chain = prompt | llm
+
+    response = chain.invoke({"user_query": user_query})
+    cleaned_response = response.content.replace("```", "").replace("\\n", "")
+
+    try:
+        metadata_filters = json.loads(cleaned_response)
+    except json.JSONDecodeError:
+        metadata_filters = {}
+
+    retriever = vectorstore.as_retriever(
+        search_type="similarity", search_kwargs={"k": 10, "filter": metadata_filters}
+    )
+    retrieved_context = retriever.invoke(user_query)
+    return format_docs(retrieved_context)
 
 
 # Function to Stream Responses
@@ -79,19 +135,7 @@ def stream_response(user_query, chat_history):
     # Prepare the prompt
     prompt = ChatPromptTemplate.from_template(template)
 
-    # Initialize ChatOpenAI for TogetherAI
-    llm = ChatOpenAI(
-        base_url="https://api.together.xyz/v1",
-        api_key=TOGETHER_API_KEY,
-        model="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-        streaming=True,
-    )
-
-    retriever = vectorstore.as_retriever(
-        search_type="similarity", search_kwargs={"k": 20}
-    )
-    retrieved_context = retriever.invoke(user_query)
-    retrieved_context = format_docs(retrieved_context)
+    retrieved_context = retrieve_context(user_query)
 
     # Combine prompt and TogetherAI in LangChain pipeline
     chain = prompt | llm | StrOutputParser()
