@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 import os
 import json
 import time
+from datetime import datetime
 
 from pinecone_utils import load_index
 
@@ -86,6 +87,8 @@ def rewrite_query(user_query, chat_history):
     Given the following conversation history and the latest user query, rewrite the user query to be independently standing and provide enough context for a retrieval system to fetch relevant documents.
     Do not include any additional text or explanations, only the rewritten user query. Keep the response fairly concise.
 
+    Today's date: {current_date}
+
     Conversation history:
     {chat_history}
 
@@ -97,10 +100,13 @@ def rewrite_query(user_query, chat_history):
     prompt = ChatPromptTemplate.from_template(template)
     chain = prompt | llm
 
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
     response = chain.invoke(
         {
             "chat_history": "\n\n".join([msg.content for msg in chat_history]),
             "user_query": user_query,
+            "current_date": current_date,
         }
     )
     rewritten_query = response.content.strip()
@@ -140,6 +146,8 @@ def retrieve_context(user_query, chat_history):
     {{}}
 
     Extract the metadata filters from the user query below and respond only in JSON format. Do not include any additional text or explanations.
+    Today's date: {current_date}
+
     User query: {user_query}
     """
     prompt = ChatPromptTemplate.from_template(template)
@@ -149,7 +157,12 @@ def retrieve_context(user_query, chat_history):
     rewritten_query = rewrite_query(user_query, chat_history)
     print("rewritten_query:", rewritten_query)
 
-    response = chain.invoke({"user_query": rewritten_query})
+    response = chain.invoke(
+        {
+            "user_query": rewritten_query,
+            "current_date": datetime.now().strftime("%Y-%m-%d"),
+        }
+    )
     cleaned_response = response.content.replace("```", "").replace("\\n", "")
 
     try:
@@ -178,6 +191,8 @@ def stream_response(user_query, chat_history):
     Keep the answer concise.
     Always say "thanks for asking!" at the end of the answer.
 
+    Today's date: {current_date}
+
     Chat history: {chat_history}
 
     User question: {user_question}
@@ -196,11 +211,14 @@ def stream_response(user_query, chat_history):
     chain = prompt | llm | StrOutputParser()
 
     # Stream response
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
     response_stream = chain.stream(
         {
             "retrieved_context": retrieved_context,
             "user_question": user_query,
             "chat_history": "\n\n".join([msg.content for msg in chat_history]),
+            "current_date": current_date,
         }
     )
 
