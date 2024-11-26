@@ -15,6 +15,7 @@ from pinecone.grpc import PineconeGRPC as Pinecone
 from dotenv import load_dotenv
 import os
 import json
+import time
 
 from pinecone_utils import load_index
 
@@ -173,8 +174,10 @@ def stream_response(user_query, chat_history):
         }
     )
 
-    response = "".join(response_stream)
-    return response, citations
+    response = ""
+    for chunk in response_stream:
+        response += chunk
+        yield response, citations
 
 
 # Session State for Chat History
@@ -202,8 +205,15 @@ if user_query:
 
     # Stream the LLM Response
     with st.chat_message("AI"):
-        response, citations = stream_response(user_query, st.session_state.chat_history)
-        st.write(response)
+        with st.spinner("Generating response..."):
+            response_generator = stream_response(
+                user_query, st.session_state.chat_history
+            )
+            response_placeholder = st.empty()
+            response, citations = "", []
+            for response, citations in response_generator:
+                response_placeholder.write(response)
+                time.sleep(0.1)  # Simulate delay for streaming
 
         with st.expander("View Citations"):
             st.write("Here are the citations for the retrieved context:")

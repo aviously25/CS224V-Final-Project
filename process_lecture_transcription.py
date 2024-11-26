@@ -64,7 +64,7 @@ def process(transcript_file):
         block = {
             "document_title": document_title,
             "section_title": section_title,
-            "content": chapter["summary"],
+            "content": f"Title: {section_title}\n\nContent: {chapter['summary']}",
             "block_metadata": {
                 "id": section_title.replace(" ", "_"),
                 "document_type": "chapter summary",
@@ -112,7 +112,7 @@ def process(transcript_file):
         block = {
             "document_title": document_title,
             "section_title": section_title,
-            "content": split_text,
+            "content": f"Title: {section_title}\n\nContent: {split_text}",
             "block_metadata": {
                 "id": section_title.replace(" ", "_"),
                 "document_type": "transcript",
