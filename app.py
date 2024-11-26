@@ -122,14 +122,10 @@ def retrieve_context(user_query):
     response = chain.invoke({"user_query": user_query})
     cleaned_response = response.content.replace("```", "").replace("\\n", "")
 
-    print("cleaned_response", cleaned_response)
-
     try:
         metadata_filters = json.loads(cleaned_response)
     except json.JSONDecodeError:
         metadata_filters = {}
-
-    print("metadata_filters", metadata_filters)
 
     retriever = vectorstore.as_retriever(
         search_type="similarity", search_kwargs={"k": 20, "filter": metadata_filters}
