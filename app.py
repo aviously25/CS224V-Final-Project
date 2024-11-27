@@ -1,5 +1,5 @@
 import streamlit as st
-import streamlit_nested_layout
+import streamlit_nested_layout  # unused as an import, but required for streamlit to support nested layouts
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
@@ -7,7 +7,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_pinecone import PineconeVectorStore
 from langchain_together import TogetherEmbeddings
-from langchain.chains import RetrievalQAWithSourcesChain
 
 
 from pinecone.grpc import PineconeGRPC as Pinecone
