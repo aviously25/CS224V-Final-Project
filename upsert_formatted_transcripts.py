@@ -44,7 +44,7 @@ def load_docs_from_jsonl(file_path) -> Iterable[Document]:
     return array
 
 
-for i in range(1, 15):
+for i in range(1, 19):
     docs = load_docs_from_jsonl(
         f"formatted_lecture_transcriptions/lecture{i}_transcript.jsonl"
     )
