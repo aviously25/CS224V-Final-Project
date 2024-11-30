@@ -5,8 +5,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
 from langchain_pinecone import PineconeVectorStore
 from langchain_together import TogetherEmbeddings
+import uuid
 
 
 from pinecone.grpc import PineconeGRPC as Pinecone
@@ -114,7 +116,7 @@ def rewrite_query(user_query, chat_history):
 
 def retrieve_context(user_query, chat_history):
     template = """
-    You are a bot that extracts metadata filters from user queries. You are given a user query and you need to extract the metadata filters from the query. 
+    You are a bot that extracts metadata filters from user queries. You are given a user query and you need to extract the metadata filters from the query.  You have access to up to lecture 18.
     This is useful for retrieving specific chunks of text from a document based on user queries. If you are not able to extract the metadata filters from the user query, you should return an empty dictionary.
     The following schema is used to represent the metadata filters:
         {{
@@ -123,6 +125,57 @@ def retrieve_context(user_query, chat_history):
             "start_ms": int, # the start time of the chunk of text in milliseconds
             "end_ms": int # the end time of the chunk of text in milliseconds
         }}
+
+    You have access to these filter operators:
+    {{
+      "filters": [
+        {{
+          "operator": "$eq",
+          "description": "Matches vectors with metadata values that are equal to a specified value.",
+          "supported_types": ["number", "string", "boolean"]
+        }},
+        {{
+          "operator": "$ne",
+          "description": "Matches vectors with metadata values that are not equal to a specified value.",
+          "supported_types": ["number", "string", "boolean"]
+        }},
+        {{
+          "operator": "$gt",
+          "description": "Matches vectors with metadata values that are greater than a specified value.",
+          "supported_types": ["number"]
+        }},
+        {{
+          "operator": "$gte",
+          "description": "Matches vectors with metadata values that are greater than or equal to a specified value.",
+          "supported_types": ["number"]
+        }},
+        {{
+          "operator": "$lt",
+          "description": "Matches vectors with metadata values that are less than a specified value.",
+          "supported_types": ["number"]
+        }},
+        {{
+          "operator": "$lte",
+          "description": "Matches vectors with metadata values that are less than or equal to a specified value.",
+          "supported_types": ["number"]
+        }},
+        {{
+          "operator": "$in",
+          "description": "Matches vectors with metadata values that are in a specified array.",
+          "supported_types": ["string", "number"]
+        }},
+        {{
+          "operator": "$nin",
+          "description": "Matches vectors with metadata values that are not in a specified array.",
+          "supported_types": ["string", "number"]
+        }},
+        {{
+          "operator": "$exists",
+          "description": "Matches vectors with the specified metadata field.",
+          "supported_types": ["boolean"]
+        }}
+      ]
+    }}
     
     For example, given the following user query: "Summarize the first 10 minutes of lecture 1", your response should be:
     {{
@@ -152,9 +205,7 @@ def retrieve_context(user_query, chat_history):
     prompt = ChatPromptTemplate.from_template(template)
     chain = prompt | llm
 
-    print("user_query:", user_query)
     rewritten_query = rewrite_query(user_query, chat_history)
-    print("rewritten_query:", rewritten_query)
 
     response = chain.invoke(
         {
@@ -169,25 +220,71 @@ def retrieve_context(user_query, chat_history):
     except json.JSONDecodeError:
         metadata_filters = {}
 
-    retriever = vectorstore.as_retriever(
-        search_type="similarity", search_kwargs={"k": 20, "filter": metadata_filters}
-    )
-
-    retrieved_context = retriever.invoke(rewritten_query)
+    try:
+        retriever = vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 20, "filter": metadata_filters},
+        )
+        retrieved_context = retriever.invoke(rewritten_query)
+    except:
+        retriever = vectorstore.as_retriever(
+            search_type="similarity", search_kwargs={"k": 20}
+        )
+        retrieved_context = retriever.invoke(rewritten_query)
 
     formatted_docs, citations = format_docs(retrieved_context)
-    return formatted_docs, citations, retrieved_context
+    return formatted_docs, citations, retrieved_context, metadata_filters
 
 
-# Function to Stream Responses
-def stream_response(user_query, chat_history):
+def generate_suggested_questions(user_query, chat_history):
     """
-    Streams response from TogetherAI using LangChain's ChatOpenAI wrapper.
+    Generates suggested questions based on the current conversation.
     """
     template = """
+    Based on the following conversation history and the latest user query, generate three consise suggested follow-up questions that the user might ask next.
+    Make sure the questions are relevant to the context and provide additional value to the user. Also, make them simple questions that can be answered based on the course content. 
+    Note that this chatbot only has access to lecture transcripts and metadata, so the suggested questions should be related to the course content. 
+    Also the bot does not have access to specific lecture dates, only lecture numbers (up to lecture 18).
+
+    Do not include any additional text or explanations, only the suggested questions, separated by a single newline.
+
+    Today's date: {current_date}
+
+    Conversation history:
+    {chat_history}
+
+    Latest user query:
+    {user_query}
+
+    Suggested follow-up questions:
+    """
+    prompt = PromptTemplate.from_template(template)
+    chain = prompt | llm
+
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
+    response = chain.invoke(
+        {
+            "chat_history": "\n\n".join([msg.content for msg in chat_history]),
+            "user_query": user_query,
+            "current_date": current_date,
+        }
+    )
+    suggested_questions = response.content.strip().split("\n\n")
+    return suggested_questions
+
+
+def stream_response(user_query, chat_history):
+    """
+    Streams response from TogetherAI using LangChain's ChatOpenAI wrapper and generates suggested follow-up questions.
+    """
+    template = """
+    You are a lecture bot that answers questions based on the course content. You have access to lecture transcripts and metadata, up to lecture 18.
+
     Use the following pieces of context and chat history to answer the question at the end, and respond kindly.
     If you don't know the answer, just say that you don't know, don't try to make up an answer.
     Keep the answer concise.
+
     Always say "thanks for asking!" at the end of the answer.
 
     Today's date: {current_date}
@@ -202,7 +299,7 @@ def stream_response(user_query, chat_history):
     # Prepare the prompt
     prompt = ChatPromptTemplate.from_template(template)
 
-    formatted_docs, citations, retrieved_context = retrieve_context(
+    formatted_docs, citations, retrieved_context, metadata_filters = retrieve_context(
         user_query, chat_history
     )
 
@@ -227,6 +324,10 @@ def stream_response(user_query, chat_history):
         yield response, citations
 
 
+def set_user_query(user_query):
+    st.session_state.user_query = user_query
+
+
 # Session State for Chat History
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
@@ -243,14 +344,38 @@ for message in st.session_state.chat_history:
             st.write(message.content)
 
 # Handle User Input
-user_query = st.chat_input("Type your question here...")
+if "user_query" not in st.session_state:
+    st.session_state.user_query = None
+
+initial_suggested_questions = [
+    "Summarize the first 10 minutes of lecture 1.",
+    "What is the final project presentation?",
+    "What does the last lecture cover?",
+]
+
+# Show initial suggested questions
+user_query = st.chat_input("Type your question here...", key="main_input")
 if user_query:
+    set_user_query(user_query)
+
+if st.session_state.user_query is None:
+    with st.expander("Suggested Questions"):
+        for question in initial_suggested_questions:
+            st.button(question, on_click=set_user_query, args=[question])
+
+# Process User Input
+# If user input or a suggestion is selected, process it
+if st.session_state.user_query:
+    user_query = st.session_state.user_query
+    set_user_query(None)
+
     st.session_state.chat_history.append(HumanMessage(content=user_query))
 
+    # Display user input
     with st.chat_message("Human"):
         st.markdown(user_query)
 
-    # Stream the LLM Response
+    # Stream LLM Response
     with st.chat_message("AI"):
         with st.spinner("Generating response..."):
             response_generator = stream_response(
@@ -260,12 +385,22 @@ if user_query:
             response, citations = "", []
             for response, citations in response_generator:
                 response_placeholder.write(response)
-                time.sleep(0.1)  # Simulate delay for streaming
 
+    # Append AI response to chat history
+    st.session_state.chat_history.append(AIMessage(content=response))
+
+    # Generate Suggested Follow-Up Questions
+    suggested_questions = generate_suggested_questions(
+        user_query, st.session_state.chat_history
+    )
+    with st.expander("Suggested Follow-Up Questions"):
+        for question in suggested_questions:
+            st.button(question, on_click=set_user_query, args=[question])
+
+    # Display Citations
+    if citations:
         with st.expander("View Citations"):
             st.write("Here are the citations for the retrieved context:")
             for citation in citations:
-                with st.expander(citation["title"]):
-                    st.write(citation["content"])
-
-    st.session_state.chat_history.append(AIMessage(content=response))
+                with st.expander(citation.get("title", "Citation")):
+                    st.write(citation.get("content", ""))
