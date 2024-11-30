@@ -67,17 +67,34 @@ def format_docs(docs):
         ]
     )
 
-    citations = sorted(
-        [
-            {
+    citations = []
+    for doc in docs:
+        if "lecture_number" in doc.metadata:
+            # Handle lecture transcript
+            citation = {
                 "title": f"Lecture {int(doc.metadata['lecture_number'])} ({ms_to_min_sec(doc.metadata.get('start_ms', 0))} - {ms_to_min_sec(doc.metadata.get('end_ms', 0))})",
                 "content": doc.page_content,
                 "lecture_number": int(doc.metadata["lecture_number"]),
                 "start_ms": doc.metadata.get("start_ms", 0),
+                "source_type": "lecture",
             }
-            for doc in docs
-        ],
-        key=lambda x: (x["lecture_number"], x["start_ms"]),
+        else:
+            # Handle website content
+            citation = {
+                "title": f"Website: {doc.metadata.get('title', 'Unknown')}",
+                "content": doc.page_content,
+                "url": doc.metadata.get("url", ""),
+                "source_type": "website",
+            }
+        citations.append(citation)
+
+    # Sort citations - lectures by number/time, websites alphabetically by title
+    citations.sort(
+        key=lambda x: (
+            (x["lecture_number"], x["start_ms"])
+            if x["source_type"] == "lecture"
+            else (float("inf"), x["title"])
+        )
     )
 
     return formatted_docs, citations
@@ -116,15 +133,26 @@ def rewrite_query(user_query, chat_history):
 
 def retrieve_context(user_query, chat_history):
     template = """
-    You are a bot that extracts metadata filters from user queries. You are given a user query and you need to extract the metadata filters from the query.  You have access to up to lecture 18.
-    This is useful for retrieving specific chunks of text from a document based on user queries. If you are not able to extract the metadata filters from the user query, you should return an empty dictionary.
+    You are a bot that extracts metadata filters from user queries. You are given a user query and you need to extract the metadata filters from the query. You have access to:
+    1. Lecture transcripts up to lecture 18
+    2. Course website content and documentation
+
+    This is useful for retrieving specific chunks of text from documents based on user queries. If you are not able to extract the metadata filters from the user query, you should return an empty dictionary.
+    
     The following schema is used to represent the metadata filters:
+        For lecture content:
         {{
-            "document_type": str, # one of "chapter summary", "transcript"
+            "document_type": str, # one of "transcript", "chapter summary"
             "lecture_number": int, # the lecture number that the chunk of text comes from
-            "start_ms": int, # the start time of the chunk of text in milliseconds
-            "end_ms": int # the end time of the chunk of text in milliseconds
+            "start_ms": int, # the start time of the chunk of text in milliseconds (for transcripts)
+            "end_ms": int # the end time of the chunk of text in milliseconds (for transcripts)
         }}
+        
+        For website content:
+        {{
+            "type": str, # one of "course_website", "course_pdf",
+        }}
+    Do not include any additional filters or properties not specified in the schema.
 
     You have access to these filter operators:
     {{
@@ -221,17 +249,26 @@ def retrieve_context(user_query, chat_history):
         metadata_filters = {}
 
     try:
+        print("Retrieving context with metadata filters:", metadata_filters)
         retriever = vectorstore.as_retriever(
             search_type="similarity",
             search_kwargs={"k": 20, "filter": metadata_filters},
         )
         retrieved_context = retriever.invoke(rewritten_query)
+
+        if len(retrieved_context) == 0:
+            print(
+                "No documents retrieved with metadata filters. Using default retrieval."
+            )
+            raise Exception("No documents retrieved with metadata filters.")
     except:
+        print("Error retrieving context. Using default retrieval.")
         retriever = vectorstore.as_retriever(
             search_type="similarity", search_kwargs={"k": 20}
         )
         retrieved_context = retriever.invoke(rewritten_query)
 
+    print(len(retrieved_context))
     formatted_docs, citations = format_docs(retrieved_context)
     return formatted_docs, citations, retrieved_context, metadata_filters
 
@@ -279,7 +316,9 @@ def stream_response(user_query, chat_history):
     Streams response from TogetherAI using LangChain's ChatOpenAI wrapper and generates suggested follow-up questions.
     """
     template = """
-    You are a lecture bot that answers questions based on the course content. You have access to lecture transcripts and metadata, up to lecture 18.
+    You are a course assistant bot that answers questions based on the course content. You have access to:
+    1. Lecture transcripts up to lecture 18
+    2. Course website content and documentation
 
     Use the following pieces of context and chat history to answer the question at the end, and respond kindly.
     If you don't know the answer, just say that you don't know, don't try to make up an answer.
@@ -403,4 +442,8 @@ if st.session_state.user_query:
             st.write("Here are the citations for the retrieved context:")
             for citation in citations:
                 with st.expander(citation.get("title", "Citation")):
+                    if citation.get("source_type") == "website" and citation.get("url"):
+                        st.markdown(
+                            f"**Source:** [{citation['url']}]({citation['url']})"
+                        )
                     st.write(citation.get("content", ""))
