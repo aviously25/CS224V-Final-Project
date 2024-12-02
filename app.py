@@ -318,11 +318,15 @@ def stream_response(user_query, chat_history):
     template = """
     You are a course assistant bot that answers questions based on the course content. You have access to:
     1. Lecture transcripts up to lecture 18
-    2. Course website content and documentation
+    2. Course website content
 
     Use the following pieces of context and chat history to answer the question at the end, and respond kindly.
     If you don't know the answer, just say that you don't know, don't try to make up an answer.
     Keep the answer concise.
+
+    For each sentence in the response, please cite the source of the information inline. If the information is from a lecture, include only the lecture number and the time range in the citation 
+    (in minutes and seconds, not milliseconds). 
+    If the information is from a website, include only the title of the website in the citation, and a link using markdown. Make sure the citations are easily legible.
 
     Always say "thanks for asking!" at the end of the answer.
 
@@ -438,7 +442,7 @@ if st.session_state.user_query:
 
     # Display Citations
     if citations:
-        with st.expander("View Citations"):
+        with st.expander("View All Citations"):
             st.write("Here are the citations for the retrieved context:")
             for citation in citations:
                 with st.expander(citation.get("title", "Citation")):
